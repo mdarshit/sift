@@ -50,8 +50,9 @@ Paste code → it validates as you type → Format / Minify / Obfuscate / Graph.
 - All parsing/formatting runs in a **Web Worker**; every parser is a lazy chunk that
   loads on first use.
 - **PWA**: after the first visit the whole tool works offline and can be installed as
-  an app. Zero network requests, zero telemetry — the buffer persists in localStorage
-  on your machine only.
+  an app. There are no application network requests or telemetry; same-origin requests
+  only load the app's static files. Buffers under 2 MB persist in `localStorage` on your
+  machine only.
 - 5 runtime dependencies: react, react-dom, sql-formatter, sql.js (used purely as a
   syntax checker), acorn.
 
@@ -100,6 +101,6 @@ src/lib/analyze.ts              statement/CTE/table extraction for the outline +
 
 - Full SQL parsing is SQLite's grammar; other dialects get an honest lexical check
   (the status bar tells you which one ran).
-- JavaScript is validate-only — bundling a JS formatter would triple the app's size.
+- JavaScript formatting is supported; minification and obfuscation remain SQL-only.
 - Compound statements with `;` inside bodies (triggers) are handled by bounded
   re-parsing; pathological cases may mis-anchor an error by a statement.

@@ -9,6 +9,7 @@ import { supportsTransform } from './lib/capabilities'
 import { Icon, ShortcutsDialog, Spinner, useMenu, type MenuItem, type Shortcut } from './components/ui'
 
 type Theme = 'dark' | 'light'
+type PersistenceState = 'saving' | 'saved' | 'failed' | 'ephemeral' | 'too-large'
 
 /** Accent choices (reference-style picker). Dark themes get the lighter cut. */
 const ACCENTS = [
@@ -29,6 +30,7 @@ type Validation =
   | { state: 'checking' }
   | { state: 'ok'; depth: ValidationDepth }
   | { state: 'issue'; issue: Issue }
+  | { state: 'unavailable'; message: string }
 
 interface Toast {
   id: number
@@ -78,27 +80,62 @@ function downloadObfuscationMap(mapping: ObfuscationMapping) {
   window.setTimeout(() => URL.revokeObjectURL(href), 1000)
 }
 
-/** Persist the buffer unless it is too large for localStorage. */
-function saveText(text: string) {
+const TEXT_KEY = 'sift:text'
+const PERSIST_KEY = 'sift:persist'
+const PERSIST_LIMIT = 2_000_000
+
+function storageGet(key: string): string | null {
   try {
-    if (text.length < 2_000_000) localStorage.setItem('sift:text', text)
+    return localStorage.getItem(key)
   } catch {
-    /* quota - the buffer simply won't survive a reload */
+    return null
+  }
+}
+
+function storageSet(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function storageRemove(key: string) {
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // Storage can be unavailable in restricted browsing contexts.
   }
 }
 
 function loadTheme(): Theme {
-  const stored = localStorage.getItem('sift:theme') ?? ''
+  const stored = storageGet('sift:theme') ?? ''
   if (stored.includes('light')) return 'light'
+  if (!stored && window.matchMedia?.('(prefers-color-scheme: light)').matches) return 'light'
   return 'dark'
 }
 
+function downloadText(text: string, name: string) {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const href = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = href
+  link.download = name
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(href), 1000)
+}
+
 export default function App() {
-  const [text, setText] = useState(() => localStorage.getItem('sift:text') ?? '')
+  const [persist, setPersist] = useState(() => storageGet(PERSIST_KEY) !== 'false')
+  const [text, setText] = useState(() => (storageGet(PERSIST_KEY) === 'false' ? '' : storageGet(TEXT_KEY) ?? ''))
+  const [fileName, setFileName] = useState('untitled.sql')
   const [emptyQuote] = useState(randomQuote)
   const [theme, setTheme] = useState<Theme>(loadTheme)
   const [accent, setAccent] = useState<AccentId>(
-    () => (localStorage.getItem('sift:accent') as AccentId) ?? 'violet',
+    () => (storageGet('sift:accent') as AccentId) ?? 'violet',
   )
   const [langOverride, setLangOverride] = useState<Language | null>(null)
   const [dialectOverride, setDialectOverride] = useState<SqlDialect | null>(null)
@@ -109,14 +146,24 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false)
   const [showStructure, setShowStructure] = useState(false)
   const [showGraph, setShowGraph] = useState(false)
-  const [structure, setStructure] = useState<AnalyzeResult | null>(null)
+  const [structure, setStructure] = useState<{ revision: number; result: AnalyzeResult } | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
+  const [persistenceState, setPersistenceState] = useState<PersistenceState>(() =>
+    storageGet(PERSIST_KEY) === 'false' ? 'ephemeral' : 'saved',
+  )
   const editorRef = useRef<EditorHandle>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const textRef = useRef(text)
+  const persistRef = useRef(persist)
+  const textRevision = useRef(0)
+  const transformInFlight = useRef(false)
+  const transformRequest = useRef(0)
   const transformHistory = useRef<TransformSnapshot[]>([])
   const menu = useMenu()
 
   textRef.current = text
+  persistRef.current = persist
 
   const detected = useMemo(() => detect(text), [text])
   const lang: Language = langOverride ?? detected.lang
@@ -133,6 +180,7 @@ export default function App() {
     if (before === after) return null
     const snapshot = { id: transformSeq++, before, after }
     transformHistory.current = [...transformHistory.current, snapshot].slice(-3)
+    textRevision.current++
     textRef.current = after
     setText(after)
     return snapshot
@@ -149,7 +197,8 @@ export default function App() {
       transformHistory.current = history.slice(0, index)
       textRef.current = snapshot.before
       setText(snapshot.before)
-      toast('Transform undone')
+      textRevision.current++
+      toast('Change undone')
       window.requestAnimationFrame(() => editorRef.current?.focus())
       return true
     },
@@ -168,6 +217,7 @@ export default function App() {
 
   const handleEditorChange = useCallback((next: string) => {
     transformHistory.current = []
+    textRevision.current++
     textRef.current = next
     setText(next)
   }, [])
@@ -175,16 +225,53 @@ export default function App() {
   // Theme + accent are applied as root attributes / CSS variables.
   useEffect(() => {
     document.documentElement.dataset.theme = theme
-    localStorage.setItem('sift:theme', theme)
+    storageSet('sift:theme', theme)
     const a = ACCENTS.find((x) => x.id === accent) ?? ACCENTS[0]
     document.documentElement.style.setProperty('--accent', theme === 'dark' ? a.dark : a.light)
-    localStorage.setItem('sift:accent', accent)
+    storageSet('sift:accent', accent)
   }, [theme, accent])
 
+  const flushPersistence = useCallback(() => {
+    const enabled = persistRef.current
+    const currentText = textRef.current
+    if (!storageSet(PERSIST_KEY, String(enabled))) {
+      setPersistenceState('failed')
+      return false
+    }
+    if (!enabled) {
+      storageRemove(TEXT_KEY)
+      setPersistenceState('ephemeral')
+      return true
+    }
+    if (currentText.length >= PERSIST_LIMIT) {
+      storageRemove(TEXT_KEY)
+      setPersistenceState('too-large')
+      return true
+    }
+    const saved = storageSet(TEXT_KEY, currentText)
+    setPersistenceState(saved ? 'saved' : 'failed')
+    return saved
+  }, [])
+
   useEffect(() => {
-    const t = window.setTimeout(() => saveText(text), 500)
+    if (!persist) setPersistenceState('ephemeral')
+    else if (text.length >= PERSIST_LIMIT) setPersistenceState('too-large')
+    else setPersistenceState('saving')
+    const t = window.setTimeout(flushPersistence, 500)
     return () => clearTimeout(t)
-  }, [text])
+  }, [text, persist, flushPersistence])
+
+  useEffect(() => {
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') flushPersistence()
+    }
+    window.addEventListener('pagehide', flushPersistence)
+    document.addEventListener('visibilitychange', flushWhenHidden)
+    return () => {
+      window.removeEventListener('pagehide', flushPersistence)
+      document.removeEventListener('visibilitychange', flushWhenHidden)
+    }
+  }, [flushPersistence])
   useEffect(() => {
     editorRef.current?.focus()
   }, [])
@@ -192,11 +279,11 @@ export default function App() {
   // Live validation, debounced. A sequence counter drops stale results.
   const validateSeq = useRef(0)
   useEffect(() => {
+    const seq = ++validateSeq.current
     if (!text.trim()) {
       setValidation({ state: 'idle' })
       return
     }
-    const seq = ++validateSeq.current
     const t = window.setTimeout(async () => {
       setValidation({ state: 'checking' })
       try {
@@ -205,10 +292,7 @@ export default function App() {
         setValidation(r.issue ? { state: 'issue', issue: r.issue } : { state: 'ok', depth: r.depth })
       } catch (err) {
         if (validateSeq.current !== seq) return
-        setValidation({
-          state: 'issue',
-          issue: { message: err instanceof Error ? err.message : String(err), line: 1, col: 1, offset: 0 },
-        })
+        setValidation({ state: 'unavailable', message: err instanceof Error ? err.message : String(err) })
       }
     }, 500)
     return () => clearTimeout(t)
@@ -218,20 +302,23 @@ export default function App() {
   const structureOpen = showStructure || showGraph
   const analyzeSeq = useRef(0)
   useEffect(() => {
+    const seq = ++analyzeSeq.current
+    const revision = textRevision.current
     if (!structureOpen || lang !== 'sql' || !text.trim()) {
       setStructure(null)
       setAnalyzing(false)
+      setAnalysisError(null)
       return
     }
-    const seq = ++analyzeSeq.current
     setAnalyzing(true)
+    setAnalysisError(null)
     const t = window.setTimeout(async () => {
       try {
         const r = await tools.analyze(text)
         if (analyzeSeq.current !== seq) return
-        setStructure(r)
-      } catch {
-        if (analyzeSeq.current === seq) setStructure(null)
+        setStructure({ revision, result: r })
+      } catch (err) {
+        if (analyzeSeq.current === seq) setAnalysisError(err instanceof Error ? err.message : String(err))
       } finally {
         if (analyzeSeq.current === seq) setAnalyzing(false)
       }
@@ -239,24 +326,46 @@ export default function App() {
     return () => clearTimeout(t)
   }, [structureOpen, lang, text])
 
+  const currentStructure = structure?.revision === textRevision.current ? structure.result : null
+
   const transform = useCallback(
     async (kind: 'format' | 'minify' | 'obfuscate') => {
-      if (busy || !text.trim()) return
+      if (transformInFlight.current || !text.trim()) return
       // Language guard — the buttons are disabled for unsupported transforms, but
       // Ctrl+Enter and the keyboard shortcuts reach here directly, so the same
       // check must live here too or a shortcut could mangle the buffer.
       if (!supportsTransform(kind, lang)) return
+      transformInFlight.current = true
+      const request = ++transformRequest.current
+      const source = text
       setBusy(true)
       try {
+        let result: string
+        let obfuscation: Awaited<ReturnType<typeof tools.obfuscate>> | null = null
         if (kind === 'format') {
-          const snapshot = rememberTransform(text, await tools.format(lang, dialect, text))
+          result = await tools.format(lang, dialect, source)
+          if (transformRequest.current !== request || textRef.current !== source) {
+            toast('Result discarded because the buffer changed', 'error')
+            return
+          }
+          const snapshot = rememberTransform(source, result)
           toast(snapshot ? 'Formatted' : 'Already formatted', 'info', snapshot ? [undoAction(snapshot)] : undefined)
         } else if (kind === 'minify') {
-          const snapshot = rememberTransform(text, await tools.minify(lang, text))
+          result = await tools.minify(lang, source)
+          if (transformRequest.current !== request || textRef.current !== source) {
+            toast('Result discarded because the buffer changed', 'error')
+            return
+          }
+          const snapshot = rememberTransform(source, result)
           toast(snapshot ? 'Minified' : 'Already minified', 'info', snapshot ? [undoAction(snapshot)] : undefined)
         } else {
-          const r = await tools.obfuscate(text)
-          const snapshot = rememberTransform(text, r.result)
+          obfuscation = await tools.obfuscate(source)
+          if (transformRequest.current !== request || textRef.current !== source) {
+            toast('Result discarded because the buffer changed', 'error')
+            return
+          }
+          const r = obfuscation
+          const snapshot = rememberTransform(source, r.result)
           const actions: ToastAction[] = []
           if (snapshot) actions.push(undoAction(snapshot))
           if (r.identifiers + r.strings > 0) {
@@ -275,10 +384,11 @@ export default function App() {
         const detail = (err instanceof Error ? err.message : String(err)).split('\n')[0]
         toast(`${label} failed: ${detail}`, 'error')
       } finally {
+        transformInFlight.current = false
         setBusy(false)
       }
     },
-    [busy, text, lang, dialect, rememberTransform, toast, undoAction],
+    [text, lang, dialect, rememberTransform, toast, undoAction],
   )
 
   const copyAll = useCallback(async () => {
@@ -340,6 +450,7 @@ export default function App() {
       { keys: [mod, shift, 'O'], label: 'Obfuscate' },
       { keys: [mod, '/'], label: 'Toggle line comment' },
       { keys: ['Tab'], label: 'Indent' },
+      { keys: ['Ctrl', 'M'], label: 'Toggle Tab focus mode' },
       { keys: [mod, shift, 'G'], label: 'Query graph' },
       { keys: [mod, shift, 'L'], label: 'Toggle theme' },
       { keys: [mod, 'Z'], label: 'Undo latest transform' },
@@ -353,11 +464,39 @@ export default function App() {
         toast('File too large (8 MB max)', 'error')
         return
       }
-      handleEditorChange(await file.text())
-      setLangOverride(null)
-      setDialectOverride(null)
+      const bufferBeforeRead = textRef.current
+      if (bufferBeforeRead && !window.confirm(`Replace the current buffer with ${file.name || 'this file'}?`)) return
+      try {
+        const contents = await file.text()
+        if (
+          textRef.current !== bufferBeforeRead &&
+          textRef.current &&
+          !window.confirm('The buffer changed while the file was being read. Replace it anyway?')
+        ) return
+        const previousText = textRef.current
+        const previousName = fileName
+        const snapshot = rememberTransform(previousText, contents)
+        setFileName(file.name || 'untitled.sql')
+        setLangOverride(null)
+        setDialectOverride(null)
+        toast(
+          `Opened ${file.name}`,
+          'info',
+          snapshot
+            ? [{
+                label: 'Undo',
+                onClick: () => {
+                  if (undoTransform(snapshot.id)) setFileName(previousName)
+                  else toast('Undo unavailable — the buffer changed', 'error')
+                },
+              }]
+            : undefined,
+        )
+      } catch (err) {
+        toast(`Could not read file: ${err instanceof Error ? err.message : String(err)}`, 'error')
+      }
     },
-    [handleEditorChange, toast],
+    [fileName, rememberTransform, toast, undoTransform],
   )
 
   const langMenuItems = (): MenuItem[] => {
@@ -388,23 +527,60 @@ export default function App() {
   }
 
   const chipLabel = lang === 'sql' ? `SQL · ${DIALECT_LABELS[dialect]}` : LANG_LABELS[lang]
-  const lines = useMemo(() => (text ? text.split('\n').length : 0), [text])
+  const lines = useMemo(() => {
+    if (!text) return 0
+    let count = 1
+    for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) count++
+    return count
+  }, [text])
   const errorLine = validation.state === 'issue' ? validation.issue.line : undefined
 
   const canMinify = supportsTransform('minify', lang)
   const canObfuscate = supportsTransform('obfuscate', lang)
+  const persistenceLabel = {
+    saving: 'Saving locally…',
+    saved: 'Saved locally',
+    failed: 'Local save failed',
+    ephemeral: 'Ephemeral',
+    'too-large': 'Not saved · too large',
+  }[persistenceState]
+
+  const newDocument = useCallback(() => {
+    if (textRef.current && !window.confirm('Clear the current buffer and start a new document?')) return
+    transformRequest.current++
+    transformHistory.current = []
+    textRevision.current++
+    textRef.current = ''
+    setText('')
+    setFileName('untitled.sql')
+    setLangOverride(null)
+    setDialectOverride(null)
+    storageRemove(TEXT_KEY)
+    window.requestAnimationFrame(() => editorRef.current?.focus())
+  }, [])
+
+  const togglePersistence = useCallback(() => {
+    const next = !persistRef.current
+    persistRef.current = next
+    setPersist(next)
+    flushPersistence()
+  }, [flushPersistence])
 
   // Header controls that don't fit a phone screen, offered via the ⋯ menu.
   const overflowItems = (): MenuItem[] => [
+    { label: 'New document', onClick: newDocument },
+    { label: 'Open file', onClick: () => fileInputRef.current?.click() },
+    { label: 'Download buffer', onClick: () => downloadText(text, fileName) },
     ...(lang === 'sql' ? [{ label: 'Query graph', onClick: () => setShowGraph(true) }] : []),
     { label: 'Copy buffer', onClick: () => void copyAll() },
     { label: (showStructure ? '● ' : '  ') + 'Outline panel', onClick: () => setShowStructure((v) => !v) },
+    { label: persist ? 'Use ephemeral mode' : 'Save buffer locally', onClick: togglePersistence },
     { label: theme === 'dark' ? 'Light theme' : 'Dark theme', onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark') },
   ]
 
   return (
     <div
-      className="flex h-full flex-col p-3 md:p-5"
+      className="flex min-h-[100dvh] flex-col p-3 md:p-5"
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) e.preventDefault()
       }}
@@ -417,6 +593,17 @@ export default function App() {
     >
       {/* The tool is one card on the page. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-[var(--shadow)]">
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="sr-only"
+          accept=".sql,.json,.js,.mjs,.cjs,.txt,text/plain,application/json"
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            if (file) void loadFile(file)
+            event.target.value = ''
+          }}
+        />
         {/* Header */}
         <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-3">
           <div className="mr-2 flex select-none items-center gap-2">
@@ -424,6 +611,13 @@ export default function App() {
               <img src={`${import.meta.env.BASE_URL}sift-logo.svg`} alt="" width="16" height="16" />
             </span>
             <h1 className="font-mono text-[13px] font-semibold tracking-tight sr-only sm:not-sr-only">Sift</h1>
+          </div>
+          <div className="hidden items-center gap-1 md:flex">
+            <button className="icon-btn" onClick={newDocument} title="New document" aria-label="New document">
+              <Icon name="close" size={13} />
+            </button>
+            <button className="btn" onClick={() => fileInputRef.current?.click()}>Open</button>
+            <button className="btn" onClick={() => downloadText(text, fileName)} disabled={!text}>Download</button>
           </div>
           <button
             className="btn btn-primary"
@@ -469,7 +663,7 @@ export default function App() {
           <div className="flex-1" />
           {/* Utility cluster: icons from sm+, accent swatches only once there's
               real room for them (lg+); all collapse into the ⋯ menu on phones. */}
-          <div className="hidden items-center gap-1 sm:flex">
+          <div className="hidden items-center gap-1 md:flex">
             <div className="hidden items-center gap-0.5 lg:flex" role="group" aria-label="Accent color">
               {ACCENTS.map((a) => (
                 <button
@@ -515,7 +709,7 @@ export default function App() {
             </button>
           </div>
           {/* Mobile-only overflow: the controls that don't fit a phone header. */}
-          <div className="flex sm:hidden">
+          <div className="flex md:hidden">
             <button
               className="icon-btn"
               onClick={(e) => menu.openFor(e, overflowItems())}
@@ -543,8 +737,9 @@ export default function App() {
           </div>
           {showStructure && (
             <StructurePanel
-              result={structure}
+              result={currentStructure}
               loading={analyzing}
+              error={analysisError}
               sqlActive={lang === 'sql'}
               onJump={(offset, line) => editorRef.current?.jumpTo(offset, line)}
               onClose={() => setShowStructure(false)}
@@ -553,7 +748,7 @@ export default function App() {
         </div>
 
         {/* Status bar */}
-        <footer className="flex h-9 shrink-0 items-center gap-4 border-t border-border px-3 font-mono text-[11px] text-dim select-none">
+        <footer className="flex min-h-9 shrink-0 items-center gap-2 border-t border-border px-3 py-1 font-mono text-[12px] text-dim select-none sm:gap-4">
           <button
             className="btn h-6 gap-1 rounded-lg border border-border bg-panel2 px-2 font-mono text-[11px]"
             onClick={(e) => menu.openFor(e, langMenuItems())}
@@ -572,14 +767,21 @@ export default function App() {
             </button>
           )}
           <div className="flex-1" />
-          <span className="tabular-nums">
+          <button
+            className="hidden whitespace-nowrap hover:text-ink sm:inline"
+            onClick={togglePersistence}
+            title="Toggle local persistence"
+          >
+            {persistenceLabel}
+          </button>
+          <span className="hidden tabular-nums md:inline">
             Ln {cursor.line}, Col {cursor.col}
           </span>
-          <span className="tabular-nums">{lines.toLocaleString()} lines</span>
+          <span className="hidden tabular-nums md:inline">{lines.toLocaleString()} lines</span>
           {validation.state === 'ok' && (
             <span className="flex items-center gap-1.5 text-ok" role="status" title={validation.depth === 'lexical' ? `Structure check - full parsing covers SQLite/standard SQL only` : undefined}>
               <span className="inline-block h-2 w-2 rounded-full bg-ok" />
-              Valid{validation.depth === 'lexical' ? '*' : ''}
+              {validation.depth === 'lexical' ? 'Structure OK' : dialect === 'sql' ? 'SQLite parse OK' : 'Valid'}
             </span>
           )}
           {validation.state === 'checking' && (
@@ -593,6 +795,12 @@ export default function App() {
               <span className="inline-block h-2 w-2 rounded-full bg-danger" />
               Invalid
             </span>
+          )}
+          {validation.state === 'unavailable' && (
+            <button className="flex items-center gap-1.5 text-warn" title={validation.message} onClick={() => setValidation({ state: 'idle' })}>
+              <span className="inline-block h-2 w-2 rounded-full bg-warn" />
+              Validation unavailable
+            </button>
           )}
           {validation.state === 'idle' && (
             <span className="flex items-center gap-1.5" role="status">
@@ -643,8 +851,9 @@ export default function App() {
       {showHelp && <ShortcutsDialog shortcuts={shortcuts} onClose={() => setShowHelp(false)} />}
       {showGraph && (
         <GraphDialog
-          result={structure}
+          result={currentStructure}
           loading={analyzing}
+          error={analysisError}
           sqlActive={lang === 'sql'}
           onJump={(offset, line) => editorRef.current?.jumpTo(offset, line)}
           onClose={() => setShowGraph(false)}

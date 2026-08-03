@@ -294,18 +294,19 @@ self.onmessage = async (e: MessageEvent<ToolRequest>) => {
   try {
     switch (req.action) {
       case 'validate':
-        post({ id: req.id, ok: true, validate: await validate(req) })
+        post({ id: req.id, action: req.action, ok: true, validate: await validate(req) })
         break
       case 'format':
-        post({ id: req.id, ok: true, result: await format(req) })
+        post({ id: req.id, action: req.action, ok: true, result: await format(req) })
         break
       case 'minify':
-        post({ id: req.id, ok: true, result: minify(req) })
+        post({ id: req.id, action: req.action, ok: true, result: minify(req) })
         break
       case 'obfuscate': {
         const r = obfuscateSql(req.text)
         post({
           id: req.id,
+          action: req.action,
           ok: true,
           result: r.sql,
           counts: { identifiers: r.identifiers, strings: r.strings },
@@ -314,7 +315,7 @@ self.onmessage = async (e: MessageEvent<ToolRequest>) => {
         break
       }
       case 'analyze':
-        post({ id: req.id, ok: true, analyze: analyzeSql(req.text) })
+        post({ id: req.id, action: req.action, ok: true, analyze: analyzeSql(req.text) })
         break
     }
   } catch (err) {

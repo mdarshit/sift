@@ -178,7 +178,14 @@ function Graph({ graph, onJump }: { graph: GraphData; onJump: (offset: number, l
             className="cursor-pointer"
             onClick={() => onJump(n.offset, n.line)}
             role="button"
-            aria-label={`Jump to ${n.label}`}
+            tabIndex={0}
+            aria-label={`${n.kind === 'cte' ? 'CTE' : n.kind === 'select' ? 'Result set' : 'Table'} ${n.label}, line ${n.line}`}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onJump(n.offset, n.line)
+              }
+            }}
           >
             <title>{`${n.label} — Ln ${n.line}`}</title>
             <rect
@@ -216,19 +223,23 @@ function Graph({ graph, onJump }: { graph: GraphData; onJump: (offset: number, l
 export function GraphDialog({
   result,
   loading,
+  error,
   sqlActive,
   onJump,
   onClose,
 }: {
   result: AnalyzeResult | null
   loading: boolean
+  error: string | null
   sqlActive: boolean
   onJump: (offset: number, line: number) => void
   onClose: () => void
 }) {
   const restore = useRef<HTMLElement | null>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     restore.current = document.activeElement as HTMLElement
+    window.requestAnimationFrame(() => dialogRef.current?.querySelector<HTMLElement>('button')?.focus())
     return () => restore.current?.focus()
   }, [])
   useEffect(() => {
@@ -236,6 +247,18 @@ export function GraphDialog({
       if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
+      } else if (e.key === 'Tab') {
+        const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button,[href],[tabindex]:not([tabindex="-1"])') ?? [])]
+        if (focusable.length === 0) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -250,6 +273,7 @@ export function GraphDialog({
       }}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Query graph"
@@ -266,6 +290,8 @@ export function GraphDialog({
         </div>
         {!sqlActive ? (
           <div className="p-4 text-[12px] text-dim">The graph is for SQL buffers.</div>
+        ) : error ? (
+          <div className="p-4 text-[12px] text-danger">Analysis unavailable: {error}</div>
         ) : !result ? (
           <div className="p-4 text-[12px] text-dim">{loading ? 'Analyzing…' : 'Nothing to analyze.'}</div>
         ) : (
@@ -296,12 +322,14 @@ export function GraphDialog({
 export function StructurePanel({
   result,
   loading,
+  error,
   sqlActive,
   onJump,
   onClose,
 }: {
   result: AnalyzeResult | null
   loading: boolean
+  error: string | null
   sqlActive: boolean
   onJump: (offset: number, line: number) => void
   onClose: () => void
@@ -317,7 +345,7 @@ export function StructurePanel({
 
   return (
     <aside
-      className="panel-slide flex w-[300px] shrink-0 flex-col border-l border-border bg-panel max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-10 max-md:shadow-[var(--shadow)]"
+      className="panel-slide flex w-[min(320px,100%)] shrink-0 flex-col border-l border-border bg-panel max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-10 max-md:shadow-[var(--shadow)]"
       aria-label="Query structure"
     >
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-3">
@@ -331,6 +359,8 @@ export function StructurePanel({
 
       {!sqlActive ? (
         <div className="p-4 text-[12px] text-dim">Structure view is for SQL buffers.</div>
+      ) : error ? (
+        <div className="p-4 text-[12px] text-danger">Analysis unavailable: {error}</div>
       ) : !result ? (
         <div className="p-4 text-[12px] text-dim">{loading ? 'Analyzing…' : 'Nothing to analyze.'}</div>
       ) : (

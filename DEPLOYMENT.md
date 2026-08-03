@@ -6,15 +6,14 @@ Every option below has a free tier that comfortably fits this app.
 
 ```bash
 npm ci             # clean install
-npm test           # 30 unit tests
+npm test           # unit tests
 npm run build      # type-checks, then emits dist/ (~2 s)
 npm run preview    # optional: serve the production build locally to sanity-check
 ```
 
-What `dist/` contains: the app shell (~60 KB gz JS), the SQLite engine (~320 KB gz WASM),
-the PostgreSQL engine as a lazy chunk (~3.4 MB gz, downloaded only when a visitor switches
-to Postgres), and a service worker (`sw.js`) that makes the site work offline after the
-first visit.
+What `dist/` contains: the app shell, the SQL.js SQLite engine as a lazy-loaded WASM
+asset, and a service worker (`sw.js`) that makes the site work offline after the first
+visit.
 
 **No special server configuration is required.** There are no client-side routes (so no
 SPA rewrite rules), no COOP/COEP headers, and no APIs. Compression and WASM MIME types
@@ -49,8 +48,9 @@ npx wrangler pages deploy dist --project-name sift
 ## Option 2 — GitHub Pages
 
 The repository already contains a ready-to-use workflow at
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). It installs, tests,
-builds, and publishes on every push to `main`.
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). It installs, builds,
+and publishes on every push to `main`. Pull requests run tests, type checking, linting,
+and a production build through [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 1. Push the project to GitHub.
 2. In the repository: **Settings → Pages → Build and deployment → Source** →
@@ -91,7 +91,7 @@ for deploy-on-push.
 
 1. Open the URL — the demo tables should appear within a second.
 2. Run a query (`Ctrl+Enter`).
-3. Switch to **Postgres** once (downloads ~3.4 MB, then cached).
+3. Validate a SQLite query once to load and cache the SQL.js WASM engine.
 4. Offline check: DevTools → **Network → Offline** → reload. The app must load and
    run queries with no network. (The service worker only registers on HTTPS or
    localhost — all four hosts serve HTTPS by default.)
@@ -101,9 +101,9 @@ for deploy-on-push.
 
 - Deploying a new build is just re-running the same pipeline; hashed asset names make
   caching safe.
-- The service worker auto-updates: on the next visit after a deploy, the new version
-  downloads in the background and activates immediately (`registerType: 'autoUpdate'`).
-  Visitors get the new version on their next page load — no manual cache clearing.
+- The service worker checks for updates in the background. A new worker waits while an
+  existing app tab is open rather than forcing that tab onto a mixed-version asset set;
+  it activates after all tabs using the old version close.
 - Hosts serve `sw.js` with revalidation by default; don't add a long-lived
   `Cache-Control: immutable` header to `sw.js` or `index.html` if you customize headers.
 
@@ -112,11 +112,12 @@ for deploy-on-push.
 | Symptom | Cause / fix |
 | --- | --- |
 | Blank page, 404s for `/assets/...` | Site is served from a sub-path but was built for the root. Build with `BASE_PATH=/<sub-path>/` (see the GitHub Pages notes). |
-| "starting PostgreSQL" never finishes | The host is blocking or mis-serving the ~10 MB `pglite-*.wasm` asset. Check the Network tab; all four hosts above serve it correctly. |
+| SQLite validation never finishes | The host is blocking or mis-serving the `sql-wasm*.wasm` asset. Check its status and MIME type in the Network tab. |
 | Old version keeps appearing | The service worker activates the new build on the *next* load. Hard-reload once, or unregister the worker in DevTools → Application. |
 | Offline mode doesn't work | Service workers require HTTPS (or localhost). Check DevTools → Application → Service Workers shows *activated*. |
 
 ## Cost
 
-Zero. All data lives in each visitor's browser (IndexedDB), so traffic is the only
-resource you consume — static file serving within every provider's free tier.
+Zero. Buffers under 2 MB and interface preferences live in each visitor's
+`localStorage`, so traffic is the only resource you consume: static file serving within
+every provider's free tier.

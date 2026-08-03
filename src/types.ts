@@ -79,13 +79,16 @@ export type ToolRequest =
   | { id: number; action: 'analyze'; text: string }
 
 export type ToolResponse =
+  | { id: number; action: 'validate'; ok: true; validate: ValidateResult }
+  | { id: number; action: 'format'; ok: true; result: string }
+  | { id: number; action: 'minify'; ok: true; result: string }
   | {
       id: number
+      action: 'obfuscate'
       ok: true
-      result?: string
-      validate?: ValidateResult
-      counts?: { identifiers: number; strings: number }
-      mapping?: ObfuscationMapping
-      analyze?: AnalyzeResult
+      result: string
+      counts: { identifiers: number; strings: number }
+      mapping: ObfuscationMapping
     }
+  | { id: number; action: 'analyze'; ok: true; analyze: AnalyzeResult }
   | { id: number; ok: false; error: string }

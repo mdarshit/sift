@@ -32,6 +32,12 @@ WHERE  x = 1 ;`
       'SELECT count(*) FROM t WHERE a - -1 > 0;',
     )
   })
+
+  it('preserves lexical boundaries where comments were removed', () => {
+    expect(minifySql('SELECT col/* note */FROM tbl;', true)).toBe('SELECT col FROM tbl;')
+    expect(minifySql('SELECT 1-/* note */-1;', true)).toBe('SELECT 1- -1;')
+    expect(minifySql('SELECT foo-- note\nbar FROM tbl;', true)).toBe('SELECT foo bar FROM tbl;')
+  })
 })
 
 describe('obfuscateSql', () => {
@@ -83,6 +89,30 @@ describe('obfuscateSql', () => {
     expect(sql).not.toContain('hidden')
     expect(sql).toContain("'s1'")
     expect(strings).toBe(1)
+  })
+
+  it('preserves PostgreSQL function syntax and common clauses', () => {
+    const { sql } = obfuscateSql(
+      'CREATE FUNCTION redact(value text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE COST 10 ROWS 5 SUPPORT helper AS $$ SELECT value $$; SELECT value FROM records FOR UPDATE SKIP LOCKED;',
+    )
+    expect(sql).toContain('RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE')
+    expect(sql).toMatch(/COST 10 ROWS 5 SUPPORT t\d+/)
+    expect(sql).toContain('FOR UPDATE SKIP LOCKED')
+  })
+
+  it('obfuscates contextual words when they are identifiers', () => {
+    const source = 'SELECT type, owner, comment, schema, domain, support, rows FROM type JOIN owner ON type.owner = owner.type;'
+    const { sql, mapping } = obfuscateSql(source)
+
+    for (const name of ['type', 'owner', 'comment', 'schema', 'domain', 'support', 'rows']) {
+      expect(sql.toLowerCase()).not.toMatch(new RegExp(`\\b${name}\\b`))
+      expect(Object.values(mapping.identifiers).map((value) => value.toLowerCase())).toContain(name)
+    }
+  })
+
+  it('obfuscates quoted contextual identifiers', () => {
+    const { sql } = obfuscateSql('SELECT "type" FROM "schema"."comment";')
+    expect(sql).toMatch(/^SELECT t\d+ FROM t\d+\.t\d+;$/)
   })
 })
 

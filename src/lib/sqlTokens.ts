@@ -1,4 +1,4 @@
-/** Shared SQL vocabulary used by the highlighter and the minify/obfuscate transforms. */
+/** SQL vocabulary used by the editor highlighter. */
 
 export const KEYWORDS = new Set(
   (
@@ -13,9 +13,18 @@ export const KEYWORDS = new Set(
     // PostgreSQL / Oracle flavor
     'serial bigserial varchar varchar2 number boolean timestamp timestamptz interval ilike lateral ' +
     'materialized sequence nextval currval grant revoke truncate merge dual rownum sysdate connect ' +
-    'prior level minus procedure function declare loop fetch cursor exception raise'
+    'prior level minus procedure function returns return language sql plpgsql declare loop fetch cursor exception raise ' +
+    'immutable stable volatile security definer invoker parallel safe unsafe leakproof cost rows support ' +
+    'qualify for share skip locked nowait only do nothing generated always identity cascade restrict ' +
+    'schema owner tablespace domain type enum comment call handler aggregate filter within cube rollup grouping'
   ).split(' '),
 )
+
+/**
+ * Words which can also commonly be identifiers. Consumers that parse SQL must
+ * decide from context whether these are syntax instead of relying on KEYWORDS.
+ */
+export const CONTEXTUAL_KEYWORDS = new Set(['type', 'owner', 'comment', 'schema', 'domain', 'support', 'rows'])
 
 /** For the editor's highlighter when the buffer is JavaScript / JSON. */
 export const JS_KEYWORDS = new Set(

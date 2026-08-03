@@ -12,7 +12,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       manifest: {
         name: 'Sift',
         short_name: 'Sift',
@@ -29,7 +29,6 @@ export default defineConfig({
     }),
   ],
   worker: { format: 'es' },
-  optimizeDeps: { exclude: ['@electric-sql/pglite'] },
   server: { port: 5180, strictPort: true },
   build: { target: 'es2022' },
   test: {

@@ -17,6 +17,13 @@ export interface EditorHandle {
   jumpTo(offset: number, line: number): void
 }
 
+export type EditorLineDecorationKind = 'added' | 'removed' | 'changed'
+
+export interface EditorLineDecoration {
+  line: number
+  kind: EditorLineDecorationKind
+}
+
 // One pass, one regex: comments, strings, numbers, words.
 const TOKEN_RE =
   /(--[^\n]*|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$))|('(?:[^'\\]|\\.|'')*'?|"(?:[^"\\]|\\.)*"?)|(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|([A-Za-z_$][A-Za-z0-9_$]*)/g
@@ -72,11 +79,13 @@ export const Editor = forwardRef<
     language: Language
     /** 1-based line to mark as the current validation error. */
     errorLine?: number
+    /** 1-based line highlights for compare mode. */
+    lineDecorations?: EditorLineDecoration[]
     onCursor?: (line: number, col: number) => void
     /** Shown dead-center while the buffer is empty. */
     emptyState?: Quote
   }
->(function Editor({ value, onChange, onAction, language, errorLine, onCursor, emptyState }, ref) {
+>(function Editor({ value, onChange, onAction, language, errorLine, lineDecorations, onCursor, emptyState }, ref) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const mirrorRef = useRef<HTMLPreElement>(null)
   const gutterRef = useRef<HTMLPreElement>(null)
@@ -182,6 +191,13 @@ export const Editor = forwardRef<
       </pre>
       <div className="relative min-w-0 flex-1">
         <pre ref={mirrorRef} className="ed-layer ed-mirror text-ink" aria-hidden="true">
+          {lineDecorations?.map((item, i) => (
+            <span
+              key={`${item.line}-${item.kind}-${i}`}
+              className={`ed-diffline ed-diffline-${item.kind}`}
+              style={{ top: `calc(16px + ${(item.line - 1) * LINE_HEIGHT_EM}em)` }}
+            />
+          ))}
           {errorLine != null && (
             <span className="ed-errline" style={{ top: `calc(16px + ${(errorLine - 1) * LINE_HEIGHT_EM}em)` }} />
           )}

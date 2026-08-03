@@ -4,6 +4,8 @@ import { tools } from './lib/toolsClient'
 import { detect, DIALECT_LABELS, LANG_LABELS } from './lib/detect'
 import { Editor, type EditorHandle } from './components/Editor'
 import { GraphDialog, StructurePanel } from './components/StructurePanel'
+import { CompareView } from './components/CompareView'
+import { JsonTreeDialog } from './components/JsonTreeDialog'
 import { randomQuote } from './lib/quotes'
 import { supportsTransform } from './lib/capabilities'
 import { Icon, ShortcutsDialog, Spinner, useMenu, type MenuItem, type Shortcut } from './components/ui'
@@ -109,6 +111,7 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false)
   const [showStructure, setShowStructure] = useState(false)
   const [showGraph, setShowGraph] = useState(false)
+  const [mode, setMode] = useState<'editor' | 'compare'>('editor')
   const [structure, setStructure] = useState<AnalyzeResult | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const editorRef = useRef<EditorHandle>(null)
@@ -317,14 +320,17 @@ export default function App() {
       } else if (k === 'l') {
         e.preventDefault()
         setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
-      } else if (k === 'g') {
+      } else if (k === 'g' && lang !== 'js') {
         e.preventDefault()
         setShowGraph((v) => !v)
+      } else if (k === 'd') {
+        e.preventDefault()
+        setMode((v) => (v === 'editor' ? 'compare' : 'editor'))
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [transform, showHelp, showGraph, undoTransform])
+  }, [transform, showHelp, showGraph, undoTransform, lang])
 
   const isMac = useMemo(() => {
     const nav = navigator as Navigator & { userAgentData?: { platform?: string } }
@@ -340,7 +346,8 @@ export default function App() {
       { keys: [mod, shift, 'O'], label: 'Obfuscate' },
       { keys: [mod, '/'], label: 'Toggle line comment' },
       { keys: ['Tab'], label: 'Indent' },
-      { keys: [mod, shift, 'G'], label: 'Query graph' },
+      { keys: [mod, shift, 'G'], label: 'Graph / JSON tree' },
+      { keys: [mod, shift, 'D'], label: 'Compare mode' },
       { keys: [mod, shift, 'L'], label: 'Toggle theme' },
       { keys: [mod, 'Z'], label: 'Undo latest transform' },
       { keys: ['?'], label: 'This help' },
@@ -396,7 +403,8 @@ export default function App() {
 
   // Header controls that don't fit a phone screen, offered via the ⋯ menu.
   const overflowItems = (): MenuItem[] => [
-    ...(lang === 'sql' ? [{ label: 'Query graph', onClick: () => setShowGraph(true) }] : []),
+    { label: (mode === 'compare' ? '● ' : '  ') + 'Compare mode', onClick: () => setMode((v) => (v === 'editor' ? 'compare' : 'editor')) },
+    ...(lang !== 'js' ? [{ label: lang === 'json' ? 'JSON tree' : 'Query graph', onClick: () => setShowGraph(true) }] : []),
     { label: 'Copy buffer', onClick: () => void copyAll() },
     { label: (showStructure ? '● ' : '  ') + 'Outline panel', onClick: () => setShowStructure((v) => !v) },
     { label: theme === 'dark' ? 'Light theme' : 'Dark theme', onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark') },
@@ -452,6 +460,14 @@ export default function App() {
             <Icon name="mask" size={13} />
             <span className="hidden sm:inline">Obfuscate</span>
           </button>
+          <button
+            className={mode === 'compare' ? 'btn btn-primary' : 'btn'}
+            onClick={() => setMode((v) => (v === 'editor' ? 'compare' : 'editor'))}
+            title="Compare two buffers (Ctrl+Shift+D)"
+          >
+            <Icon name="compare" size={13} />
+            <span className="hidden sm:inline">Compare</span>
+          </button>
           {/* Graph stays with the transforms on desktop; on phones it moves into
               the ⋯ menu. Wrapped in a plain element because the unlayered .btn
               display rule would otherwise beat the `hidden` utility. */}
@@ -459,11 +475,11 @@ export default function App() {
             <button
               className="btn"
               onClick={() => setShowGraph(true)}
-              disabled={lang !== 'sql'}
-              title={lang === 'sql' ? 'Table/CTE dependency graph (Ctrl+Shift+G)' : 'SQL only'}
+              disabled={lang === 'js'}
+              title={lang === 'json' ? 'JSON tree (Ctrl+Shift+G)' : lang === 'sql' ? 'Table/CTE dependency graph (Ctrl+Shift+G)' : 'SQL/JSON only'}
             >
               <Icon name="graph" size={13} />
-              Graph
+              {lang === 'json' ? 'Tree' : 'Graph'}
             </button>
           </div>
           <div className="flex-1" />
@@ -527,31 +543,34 @@ export default function App() {
           </div>
         </header>
 
-        {/* Editor + structure panel */}
-        <div className="relative flex min-h-0 flex-1">
-          <div className="min-w-0 flex-1">
-            <Editor
-              ref={editorRef}
-              value={text}
-              onChange={handleEditorChange}
-              onAction={() => void transform('format')}
-              language={lang}
-              errorLine={errorLine}
-              onCursor={(line, col) => setCursor({ line, col })}
-              emptyState={emptyQuote}
-            />
+        {/* Editor / compare workspace */}
+        {mode === 'compare' ? (
+          <CompareView seedText={text} onExit={() => setMode('editor')} />
+        ) : (
+          <div className="relative flex min-h-0 flex-1">
+            <div className="min-w-0 flex-1">
+              <Editor
+                ref={editorRef}
+                value={text}
+                onChange={handleEditorChange}
+                onAction={() => void transform('format')}
+                language={lang}
+                errorLine={errorLine}
+                onCursor={(line, col) => setCursor({ line, col })}
+                emptyState={emptyQuote}
+              />
+            </div>
+            {showStructure && (
+              <StructurePanel
+                result={structure}
+                loading={analyzing}
+                sqlActive={lang === 'sql'}
+                onJump={(offset, line) => editorRef.current?.jumpTo(offset, line)}
+                onClose={() => setShowStructure(false)}
+              />
+            )}
           </div>
-          {showStructure && (
-            <StructurePanel
-              result={structure}
-              loading={analyzing}
-              sqlActive={lang === 'sql'}
-              onJump={(offset, line) => editorRef.current?.jumpTo(offset, line)}
-              onClose={() => setShowStructure(false)}
-            />
-          )}
-        </div>
-
+        )}
         {/* Status bar */}
         <footer className="flex h-9 shrink-0 items-center gap-4 border-t border-border px-3 font-mono text-[11px] text-dim select-none">
           <button
@@ -641,15 +660,16 @@ export default function App() {
       )}
       {menu.element}
       {showHelp && <ShortcutsDialog shortcuts={shortcuts} onClose={() => setShowHelp(false)} />}
-      {showGraph && (
+      {showGraph && lang === 'sql' && (
         <GraphDialog
           result={structure}
           loading={analyzing}
-          sqlActive={lang === 'sql'}
+          sqlActive
           onJump={(offset, line) => editorRef.current?.jumpTo(offset, line)}
           onClose={() => setShowGraph(false)}
         />
       )}
+      {showGraph && lang === 'json' && <JsonTreeDialog text={text} onClose={() => setShowGraph(false)} />}
     </div>
   )
 }

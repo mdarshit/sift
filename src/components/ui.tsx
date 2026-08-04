@@ -37,6 +37,13 @@ const paths: Record<string, ReactNode> = {
       <path d="M6 7.5c2.5 0 1.5-3.5 4-3.5M6 8.5c2.5 0 1.5 3.5 4 3.5" />
     </>
   ),
+  compare: (
+    <>
+      <path d="M2.5 3.5h4M2.5 6.5h5M2.5 9.5h4M9.5 3.5h4M8.5 6.5h5M9.5 9.5h4" />
+      <path d="M6.5 12.5h3M8 11v3" />
+    </>
+  ),
+  swap: <path d="M4 4h7.5l-2-2M12 12H4.5l2 2M11.5 4 14 6.5 11.5 9M4.5 12 2 9.5 4.5 7" />,
   structure: (
     <>
       <path d="M6 3.5h7.5M8.5 8h5M8.5 12.5h5" />

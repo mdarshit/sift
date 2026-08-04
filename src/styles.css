@@ -267,6 +267,141 @@ body {
   color: var(--faint);
 }
 
+.json-row {
+  @apply flex h-8 min-w-max items-center gap-2 pr-3 font-mono text-[12px];
+  border-radius: 6px;
+}
+.json-row:hover {
+  background: var(--hover);
+}
+.json-key {
+  @apply min-w-24 max-w-52 truncate font-semibold;
+  color: var(--ink);
+}
+.json-kind {
+  @apply rounded-md px-1.5 py-0.5 text-[10px];
+  background: var(--panel2);
+  color: var(--accent);
+}
+.json-preview {
+  @apply max-w-80 truncate;
+  color: var(--dim);
+}
+.json-path {
+  @apply ml-auto max-w-96 truncate text-[11px];
+  color: var(--faint);
+}
+
+.diff-grid {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.diff-row {
+  @apply grid min-w-[760px] grid-cols-[48px_minmax(0,1fr)_48px_minmax(0,1fr)] border-b border-border;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+.diff-row:hover {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.diff-active {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.diff-ln {
+  @apply px-2 py-1 text-right tabular-nums;
+  color: var(--faint);
+  background: var(--panel2);
+}
+.diff-code {
+  @apply min-h-7 overflow-hidden text-ellipsis whitespace-pre px-2 py-1 text-left;
+  color: var(--dim);
+}
+.diff-hit {
+  cursor: pointer;
+}
+.diff-hit:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.diff-hit:disabled {
+  cursor: default;
+}
+.diff-added {
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+}
+.diff-removed {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
+.diff-changed {
+  background: color-mix(in srgb, var(--warn) 20%, transparent);
+}
+.diff-added .diff-code,
+.diff-removed .diff-code,
+.diff-changed .diff-code {
+  color: var(--ink);
+}
+.diff-added .diff-ln {
+  color: var(--ok);
+}
+.diff-removed .diff-ln {
+  color: var(--danger);
+}
+.diff-changed .diff-ln {
+  color: var(--warn);
+}
+.location-pane {
+  @apply flex flex-col;
+}
+.location-map {
+  position: relative;
+  min-height: 210px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background:
+    linear-gradient(var(--border), var(--border)) 50% 0 / 1px 100% no-repeat,
+    var(--panel2);
+}
+.location-marker {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  height: 4px;
+  border-radius: 2px;
+  transform: translateY(-50%);
+}
+.location-marker:hover,
+.location-active {
+  height: 7px;
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
+}
+.location-added {
+  background: var(--ok);
+}
+.location-removed {
+  background: var(--danger);
+}
+.location-changed {
+  background: var(--warn);
+}
+.location-row {
+  @apply mb-1 flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-left text-[12px];
+  border-color: var(--border);
+  color: var(--dim);
+  background: var(--panel2);
+}
+.location-row:hover,
+.location-row-active {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+.location-row-added {
+  box-shadow: inset 2px 0 0 var(--ok);
+}
+.location-row-removed {
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+.location-row-changed {
+  box-shadow: inset 2px 0 0 var(--warn);
+}
+
 /* Keycap in the shortcuts dialog. */
 .kbd {
   @apply inline-flex h-6 min-w-6 items-center justify-center rounded-md border px-1.5 font-mono text-[11px];
@@ -333,14 +468,29 @@ body {
   color: var(--faint);
   border-right: 1px solid var(--border);
 }
-.ed-errline {
+.ed-errline,
+.ed-diffline {
   position: absolute;
   left: 0;
   width: 9999px; /* absolute children anchor to the unscrolled padding box */
   height: 1.55em;
+  pointer-events: none;
+}
+.ed-errline {
   background: var(--danger-soft);
   box-shadow: inset 2px 0 0 var(--danger);
-  pointer-events: none;
+}
+.ed-diffline-added {
+  background: color-mix(in srgb, var(--ok) 17%, transparent);
+  box-shadow: inset 2px 0 0 var(--ok);
+}
+.ed-diffline-removed {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+.ed-diffline-changed {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  box-shadow: inset 2px 0 0 var(--warn);
 }
 /* Empty-buffer state: a centered quote, behind the (transparent) textarea so a
    click still lands in the editor. Vanishes the moment anything is typed. */

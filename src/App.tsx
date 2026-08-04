@@ -678,7 +678,7 @@ export default function App() {
 
   return (
     <div
-      className="flex min-h-[100dvh] flex-col p-3 md:p-5"
+      className="flex h-[100dvh] min-h-0 flex-col p-3 md:p-5"
       onDragOver={(e) => {
         if (mode === 'document' && e.dataTransfer.types.includes('Files')) e.preventDefault()
       }}

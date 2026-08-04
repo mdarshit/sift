@@ -6,7 +6,6 @@
  */
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import { KEYWORDS, JS_KEYWORDS } from '../lib/sqlTokens'
-import type { Quote } from '../lib/quotes'
 import type { Language } from '../types'
 
 export interface EditorHandle {
@@ -15,6 +14,11 @@ export interface EditorHandle {
   focus(): void
   /** Move the caret to a 0-based character offset and scroll it into view. */
   jumpTo(offset: number, line: number): void
+}
+
+export interface EditorLineDecoration {
+  line: number
+  kind: 'added' | 'removed' | 'changed'
 }
 
 // One pass, one regex: comments, strings, numbers, words.
@@ -72,11 +76,13 @@ export const Editor = forwardRef<
     language: Language
     /** 1-based line to mark as the current validation error. */
     errorLine?: number
+    /** 1-based line highlights used by compare mode. */
+    lineDecorations?: EditorLineDecoration[]
     onCursor?: (line: number, col: number) => void
-    /** Shown dead-center while the buffer is empty. */
-    emptyState?: Quote
+    /** Interactive welcome content shown while the buffer is empty. */
+    emptyState?: ReactNode
   }
->(function Editor({ value, onChange, onAction, language, errorLine, onCursor, emptyState }, ref) {
+>(function Editor({ value, onChange, onAction, language, errorLine, lineDecorations, onCursor, emptyState }, ref) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const mirrorRef = useRef<HTMLPreElement>(null)
   const gutterRef = useRef<HTMLPreElement>(null)
@@ -213,6 +219,13 @@ export const Editor = forwardRef<
       </pre>
       <div className="relative min-w-0 flex-1">
         <pre ref={mirrorRef} className="ed-layer ed-mirror text-ink" aria-hidden="true">
+          {lineDecorations?.map((item) => (
+            <span
+              key={`${item.line}-${item.kind}`}
+              className={`ed-diffline ed-diffline-${item.kind}`}
+              style={{ top: `calc(16px + ${(item.line - 1) * LINE_HEIGHT_EM}em)` }}
+            />
+          ))}
           {errorLine != null && (
             <span className="ed-errline" style={{ top: `calc(16px + ${(errorLine - 1) * LINE_HEIGHT_EM}em)` }} />
           )}
@@ -220,13 +233,15 @@ export const Editor = forwardRef<
           {'\n'}
         </pre>
         {value.length === 0 && emptyState && (
-          <div className="ed-empty" aria-hidden="true">
-            <div className="ed-empty-inner pop">
-              <p className="ed-quote">{emptyState.text}</p>
-              {emptyState.by && <p className="ed-quote-by">{emptyState.by}</p>}
-              <span className="ed-quote-rule" />
-              <p className="ed-quote-hint">Paste or start typing — SQL, JSON or JavaScript</p>
-            </div>
+          <div
+            className="ed-empty"
+            onMouseDown={(event) => {
+              if ((event.target as HTMLElement).closest('button, a, input')) return
+              event.preventDefault()
+              taRef.current?.focus()
+            }}
+          >
+            {emptyState}
           </div>
         )}
         <textarea

@@ -2,6 +2,8 @@
 import type {
   AnalyzeResult,
   Language,
+  JsonTreeResult,
+  LineDiffResult,
   ObfuscationMapping,
   SqlDialect,
   ToolRequest,
@@ -139,6 +141,16 @@ export class ToolsClient {
   async analyze(text: string): Promise<AnalyzeResult> {
     const r = await this.request({ action: 'analyze', text })
     return r.analyze
+  }
+
+  async diffLines(left: string, right: string): Promise<LineDiffResult> {
+    const r = await this.request({ action: 'lineDiff', left, right })
+    return r.diff
+  }
+
+  async parseJsonTree(text: string): Promise<JsonTreeResult> {
+    const r = await this.request({ action: 'jsonTree', text })
+    return r.json
   }
 
   async obfuscate(

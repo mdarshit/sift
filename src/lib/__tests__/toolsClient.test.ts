@@ -71,6 +71,46 @@ describe('ToolsClient', () => {
     await expect(result).resolves.toEqual({ issue: null, depth: 'full' })
   })
 
+  it('sends and returns typed line diff responses', async () => {
+    const { client, workers } = setup()
+    const result = client.diffLines('a', 'b')
+    const request = workers[0].requests[0]
+    expect(request).toMatchObject({ action: 'lineDiff', left: 'a', right: 'b' })
+    workers[0].respond({
+      id: request.id,
+      action: 'lineDiff',
+      ok: true,
+      diff: {
+        rows: [{ kind: 'changed', leftLine: 1, rightLine: 1, left: 'a', right: 'b' }],
+        counts: { same: 0, added: 0, removed: 0, changed: 1 },
+        approximate: false,
+        truncated: false,
+        omittedRows: 0,
+      },
+    })
+    await expect(result).resolves.toMatchObject({ counts: { changed: 1 }, approximate: false })
+  })
+
+  it('sends and returns typed JSON tree responses', async () => {
+    const { client, workers } = setup()
+    const result = client.parseJsonTree('{}')
+    const request = workers[0].requests[0]
+    expect(request).toMatchObject({ action: 'jsonTree', text: '{}' })
+    workers[0].respond({
+      id: request.id,
+      action: 'jsonTree',
+      ok: true,
+      json: {
+        ok: true,
+        tree: { key: '$', path: '$', kind: 'object', preview: '{0}', children: [] },
+        truncated: false,
+        omittedNodes: 0,
+        limits: { depth: false, nodes: false, children: false },
+      },
+    })
+    await expect(result).resolves.toMatchObject({ ok: true, truncated: false })
+  })
+
   it('rejects a response with the wrong action', async () => {
     const { client, workers } = setup()
     const result = client.format('json', 'sql', '{}')

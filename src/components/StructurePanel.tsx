@@ -4,7 +4,7 @@
  * Rendering is plain DOM + SVG — the graph is a simple layered DAG (longest
  * path from sources), matching the project's zero-dependency approach.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { AnalyzeResult, GraphData, OutlineNode } from '../types'
 import { Icon, Spinner } from './ui'
 
@@ -213,6 +213,153 @@ function Graph({ graph, onJump }: { graph: GraphData; onJump: (offset: number, l
         ))}
       </svg>
     </div>
+  )
+}
+
+type InspectorTab = 'problems' | 'outline' | 'lineage' | 'obfuscate'
+
+export function InspectorPanel({
+  result,
+  loading,
+  error,
+  sqlActive,
+  validation,
+  canSanitize,
+  restoreFocusRef,
+  onObfuscate,
+  onJump,
+  onClose,
+}: {
+  result: AnalyzeResult | null
+  loading: boolean
+  error: string | null
+  sqlActive: boolean
+  validation: { kind: 'idle' | 'checking' | 'ok' | 'issue' | 'unavailable'; message: string; line?: number; offset?: number }
+  canSanitize: boolean
+  restoreFocusRef: RefObject<HTMLButtonElement | null>
+  onObfuscate: () => void
+  onJump: (offset: number, line: number) => void
+  onClose: () => void
+}) {
+  const [tab, setTab] = useState<InspectorTab>('problems')
+  const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches)
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const panelRef = useRef<HTMLElement>(null)
+  const restore = useRef<HTMLElement | null>(null)
+  const tabs: { id: InspectorTab; label: string }[] = [
+    { id: 'problems', label: 'Problems' },
+    { id: 'outline', label: 'Outline' },
+    { id: 'lineage', label: 'Lineage' },
+    { id: 'obfuscate', label: 'Obfuscate' },
+  ]
+
+  useEffect(() => {
+    restore.current = restoreFocusRef.current ?? document.activeElement as HTMLElement
+    window.requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>('[role="tab"]')?.focus())
+    return () => restore.current?.focus()
+  }, [restoreFocusRef])
+
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 767px)')
+    const update = () => setMobile(query.matches)
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
+
+  useEffect(() => {
+    if (!mobile) return
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      } else if (event.key === 'Tab') {
+        const focusable = [...(panelRef.current?.querySelectorAll<HTMLElement>('button,[href],input,[tabindex]:not([tabindex="-1"])') ?? [])]
+        if (focusable.length === 0) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first.focus()
+        }
+      }
+    }
+    window.addEventListener('keydown', keydown)
+    return () => {
+      window.removeEventListener('keydown', keydown)
+    }
+  }, [mobile, onClose])
+
+  const toggle = (path: string) => setCollapsed((previous) => {
+    const next = new Set(previous)
+    if (next.has(path)) next.delete(path)
+    else next.add(path)
+    return next
+  })
+  const panelId = 'inspector-tabpanel'
+  const jump = (offset: number, line: number) => {
+    if (mobile) onClose()
+    window.requestAnimationFrame(() => onJump(offset, line))
+  }
+
+  return (
+    <>
+      <button className="inspector-backdrop" aria-hidden="true" tabIndex={-1} onClick={onClose} />
+      <aside
+        ref={panelRef}
+        id="inspector-panel"
+        className="inspector panel-slide"
+        role={mobile ? 'dialog' : 'complementary'}
+        aria-modal={mobile ? true : undefined}
+        aria-label="Document inspector"
+      >
+        <div className="inspector-head">
+          <div
+            className="inspector-tabs"
+            role="tablist"
+            aria-label="Inspector views"
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+              event.preventDefault()
+              const index = tabs.findIndex((item) => item.id === tab)
+              const next = tabs[(index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length]
+              setTab(next.id)
+              window.requestAnimationFrame(() => document.getElementById(`inspector-tab-${next.id}`)?.focus())
+            }}
+          >
+            {tabs.map((item) => (
+              <button
+                key={item.id}
+                id={`inspector-tab-${item.id}`}
+                className="tab"
+                role="tab"
+                aria-selected={tab === item.id}
+                aria-controls={panelId}
+                tabIndex={tab === item.id ? 0 : -1}
+                onClick={() => setTab(item.id)}
+              >{item.label}</button>
+            ))}
+          </div>
+          {loading && <Spinner size={12} />}
+          <button className="icon-btn" onClick={onClose} aria-label="Close inspector"><Icon name="close" size={12} /></button>
+        </div>
+        <div id={panelId} className="inspector-body" role="tabpanel" aria-labelledby={`inspector-tab-${tab}`}>
+          {tab === 'problems' && (
+            <div className="inspector-message">
+              <strong>{validation.kind === 'issue' ? 'Validation issue' : validation.kind === 'unavailable' ? 'Validation unavailable' : validation.kind === 'checking' ? 'Checking document' : validation.kind === 'ok' ? 'No problems found' : 'Nothing to validate'}</strong>
+              <p>{validation.message}</p>
+              {validation.kind === 'issue' && validation.line != null && validation.offset != null && <button className="btn" onClick={() => jump(validation.offset!, validation.line!)}>Go to line {validation.line}</button>}
+            </div>
+          )}
+          {tab === 'outline' && (!sqlActive ? <div className="inspector-message">Outline is available for SQL documents.</div> : error ? <div className="inspector-message text-danger">Analysis unavailable: {error}</div> : !result ? <div className="inspector-message">{loading ? 'Analyzing…' : 'Nothing to analyze.'}</div> : result.outline.map((node, index) => <OutlineRow key={index} node={node} depth={0} path={String(index)} collapsed={collapsed} onToggle={toggle} onJump={jump} />))}
+          {tab === 'lineage' && (!sqlActive ? <div className="inspector-message">Lineage is available for SQL documents.</div> : error ? <div className="inspector-message text-danger">Analysis unavailable: {error}</div> : !result ? <div className="inspector-message">{loading ? 'Analyzing…' : 'Nothing to analyze.'}</div> : <Graph graph={result.graph} onJump={jump} />)}
+          {tab === 'obfuscate' && <div className="inspector-message"><strong>{canSanitize ? 'Review an obfuscated copy' : 'Obfuscation is unavailable for this language'}</strong><p>Identifiers and quoted strings are replaced locally. Comments, numbers, parameters, and SQL structure remain visible. Always review the preview before sharing it.</p>{canSanitize && <button className="btn btn-primary" onClick={onObfuscate}>Preview obfuscation</button>}</div>}
+        </div>
+        {result?.truncated && sqlActive && <div className="inspector-foot">Large buffer: analysis view truncated.</div>}
+      </aside>
+    </>
   )
 }
 

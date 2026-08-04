@@ -37,6 +37,20 @@ const paths: Record<string, ReactNode> = {
       <path d="M6 7.5c2.5 0 1.5-3.5 4-3.5M6 8.5c2.5 0 1.5 3.5 4 3.5" />
     </>
   ),
+  compare: (
+    <>
+      <path d="M2.5 3.5h4M2.5 6.5h5M2.5 9.5h4M9.5 3.5h4M8.5 6.5h5M9.5 9.5h4" />
+      <path d="M6.5 12.5h3M8 11v3" />
+    </>
+  ),
+  swap: <path d="M4 4h7.5l-2-2M12 12H4.5l2 2M11.5 4 14 6.5 11.5 9M4.5 12 2 9.5 4.5 7" />,
+  tree: (
+    <>
+      <path d="M3 3.5h3M5 3.5v9M5 7.8h3M5 12.5h3" />
+      <rect x="8" y="6.3" width="5" height="3" rx=".7" />
+      <rect x="8" y="11" width="5" height="3" rx=".7" />
+    </>
+  ),
   structure: (
     <>
       <path d="M6 3.5h7.5M8.5 8h5M8.5 12.5h5" />
@@ -51,6 +65,14 @@ const paths: Record<string, ReactNode> = {
     </>
   ),
   close: <path d="M4 4l8 8M12 4l-8 8" />,
+  settings: (
+    <>
+      <circle cx="8" cy="8" r="2.2" />
+      <path d="M8 1.8v1.4M8 12.8v1.4M1.8 8h1.4M12.8 8h1.4M3.6 3.6l1 1M11.4 11.4l1 1M12.4 3.6l-1 1M4.6 11.4l-1 1" />
+    </>
+  ),
+  undo: <path d="M6 5H2.5m0 0L5 2.5M2.5 5l2.5 2.5M3 5h6a4 4 0 0 1 0 8H6.5" />,
+  redo: <path d="M10 5h3.5m0 0L11 2.5M13.5 5 11 7.5M13 5H7a4 4 0 0 0 0 8h2.5" />,
   more: (
     <>
       <circle cx="3.5" cy="8" r="1.4" fill="currentColor" stroke="none" />

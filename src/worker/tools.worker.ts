@@ -9,6 +9,8 @@ import type { Issue, ToolRequest, ToolResponse, ValidateResult } from '../types'
 import { formatterLanguage } from '../lib/detect'
 import { minifySql, obfuscateSql } from '../lib/transform'
 import { analyzeSql } from '../lib/analyze'
+import { diffLines } from '../lib/diff'
+import { parseJsonTree } from '../lib/jsonTools'
 
 function post(msg: ToolResponse) {
   ;(self as unknown as { postMessage: (m: unknown) => void }).postMessage(msg)
@@ -317,6 +319,14 @@ self.onmessage = async (e: MessageEvent<ToolRequest>) => {
       case 'analyze':
         post({ id: req.id, action: req.action, ok: true, analyze: analyzeSql(req.text) })
         break
+      case 'lineDiff':
+        post({ id: req.id, action: req.action, ok: true, diff: diffLines(req.left, req.right) })
+        break
+      case 'jsonTree':
+        post({ id: req.id, action: req.action, ok: true, json: parseJsonTree(req.text) })
+        break
+      default:
+        post({ id: (req as ToolRequest).id, ok: false, error: 'Unsupported tools worker action' })
     }
   } catch (err) {
     post({ id: req.id, ok: false, error: err instanceof Error ? err.message : String(err) })

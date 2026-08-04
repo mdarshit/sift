@@ -67,6 +67,50 @@ export interface ObfuscationMapping {
   strings: Record<string, string>
 }
 
+export type LineDiffKind = 'same' | 'added' | 'removed' | 'changed'
+
+export interface LineDiffRow {
+  kind: LineDiffKind
+  leftLine: number | null
+  rightLine: number | null
+  left: string
+  right: string
+}
+
+export interface LineDiffResult {
+  rows: LineDiffRow[]
+  counts: Record<LineDiffKind, number>
+  /** True when the bounded fallback was used instead of the exact algorithm. */
+  approximate: boolean
+  /** True when rows were omitted from the response. */
+  truncated: boolean
+  omittedRows: number
+}
+
+export type JsonKind = 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null'
+
+export interface JsonTreeNode {
+  key: string
+  path: string
+  kind: JsonKind
+  preview: string
+  children?: JsonTreeNode[]
+  /** Direct children omitted by the per-parent cap. */
+  omittedChildren?: number
+  /** Children were not traversed because the depth cap was reached. */
+  depthTruncated?: boolean
+}
+
+export type JsonTreeResult =
+  | {
+      ok: true
+      tree: JsonTreeNode
+      truncated: boolean
+      omittedNodes: number
+      limits: { depth: boolean; nodes: boolean; children: boolean }
+    }
+  | { ok: false; error: 'parse'; message: string }
+
 // ---------------------------------------------------------------------------
 // Worker protocol
 // ---------------------------------------------------------------------------
@@ -77,15 +121,22 @@ export type ToolRequest =
   | { id: number; action: 'minify'; lang: Language; text: string }
   | { id: number; action: 'obfuscate'; text: string }
   | { id: number; action: 'analyze'; text: string }
+  | { id: number; action: 'lineDiff'; left: string; right: string }
+  | { id: number; action: 'jsonTree'; text: string }
 
 export type ToolResponse =
+  | { id: number; action: 'validate'; ok: true; validate: ValidateResult }
+  | { id: number; action: 'format'; ok: true; result: string }
+  | { id: number; action: 'minify'; ok: true; result: string }
   | {
       id: number
+      action: 'obfuscate'
       ok: true
-      result?: string
-      validate?: ValidateResult
-      counts?: { identifiers: number; strings: number }
-      mapping?: ObfuscationMapping
-      analyze?: AnalyzeResult
+      result: string
+      counts: { identifiers: number; strings: number }
+      mapping: ObfuscationMapping
     }
+  | { id: number; action: 'analyze'; ok: true; analyze: AnalyzeResult }
+  | { id: number; action: 'lineDiff'; ok: true; diff: LineDiffResult }
+  | { id: number; action: 'jsonTree'; ok: true; json: JsonTreeResult }
   | { id: number; ok: false; error: string }

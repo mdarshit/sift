@@ -4,9 +4,8 @@
  * load; beyond the highlight cap it degrades to plain text but stays fully
  * editable. Gutter, mirror and textarea share identical font metrics.
  */
-import { forwardRef, useImperativeHandle, useMemo, useRef, type ReactNode } from 'react'
+import { forwardRef, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import { KEYWORDS, JS_KEYWORDS } from '../lib/sqlTokens'
-import type { Quote } from '../lib/quotes'
 import type { Language } from '../types'
 
 export interface EditorHandle {
@@ -17,11 +16,9 @@ export interface EditorHandle {
   jumpTo(offset: number, line: number): void
 }
 
-export type EditorLineDecorationKind = 'added' | 'removed' | 'changed'
-
 export interface EditorLineDecoration {
   line: number
-  kind: EditorLineDecorationKind
+  kind: 'added' | 'removed' | 'changed'
 }
 
 // One pass, one regex: comments, strings, numbers, words.
@@ -57,16 +54,16 @@ function highlight(text: string, lang: Language): ReactNode[] {
   return out
 }
 
-function lineColAt(text: string, offset: number): { line: number; col: number } {
-  let line = 1
-  let lineStart = 0
-  for (let i = 0; i < offset; i++) {
-    if (text.charCodeAt(i) === 10) {
-      line++
-      lineStart = i + 1
-    }
+function lineColAt(lineStarts: number[], offset: number): { line: number; col: number } {
+  let low = 0
+  let high = lineStarts.length
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (lineStarts[mid] <= offset) low = mid + 1
+    else high = mid
   }
-  return { line, col: offset - lineStart + 1 }
+  const index = Math.max(0, low - 1)
+  return { line: index + 1, col: offset - lineStarts[index] + 1 }
 }
 
 export const Editor = forwardRef<
@@ -79,16 +76,17 @@ export const Editor = forwardRef<
     language: Language
     /** 1-based line to mark as the current validation error. */
     errorLine?: number
-    /** 1-based line highlights for compare mode. */
+    /** 1-based line highlights used by compare mode. */
     lineDecorations?: EditorLineDecoration[]
     onCursor?: (line: number, col: number) => void
-    /** Shown dead-center while the buffer is empty. */
-    emptyState?: Quote
+    /** Interactive welcome content shown while the buffer is empty. */
+    emptyState?: ReactNode
   }
 >(function Editor({ value, onChange, onAction, language, errorLine, lineDecorations, onCursor, emptyState }, ref) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const mirrorRef = useRef<HTMLPreElement>(null)
   const gutterRef = useRef<HTMLPreElement>(null)
+  const [tabMovesFocus, setTabMovesFocus] = useState(false)
 
   useImperativeHandle(ref, () => ({
     getSelection() {
@@ -118,8 +116,15 @@ export const Editor = forwardRef<
     return n
   }, [value])
 
+  const lineStarts = useMemo(() => {
+    const starts = [0]
+    for (let i = 0; i < value.length; i++) if (value.charCodeAt(i) === 10) starts.push(i + 1)
+    return starts
+  }, [value])
+
   // One string, one text node - cheap even at 100k lines.
   const gutterText = useMemo(() => {
+    if (lineCount > 100_000) return '·\n'
     let s = ''
     for (let i = 1; i <= lineCount; i++) s += i + '\n'
     return s
@@ -139,7 +144,7 @@ export const Editor = forwardRef<
   const reportCursor = () => {
     const ta = taRef.current
     if (!ta || !onCursor) return
-    const { line, col } = lineColAt(ta.value, ta.selectionStart)
+    const { line, col } = lineColAt(lineStarts, ta.selectionStart)
     onCursor(line, col)
   }
 
@@ -165,6 +170,11 @@ export const Editor = forwardRef<
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const mod = e.ctrlKey || e.metaKey
+    if (e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === 'm') {
+      e.preventDefault()
+      setTabMovesFocus((value) => !value)
+      return
+    }
     if (mod && e.key === 'Enter') {
       e.preventDefault()
       onAction()
@@ -175,12 +185,30 @@ export const Editor = forwardRef<
       toggleComment(e.currentTarget)
       return
     }
-    if (e.key === 'Tab') {
+    if (e.key === 'Tab' && !tabMovesFocus) {
       e.preventDefault()
       const ta = e.currentTarget
       const { selectionStart: s, selectionEnd: end } = ta
-      onChange(ta.value.slice(0, s) + '  ' + ta.value.slice(end))
-      requestAnimationFrame(() => ta.setSelectionRange(s + 2, s + 2))
+      const lineStart = ta.value.lastIndexOf('\n', s - 1) + 1
+      if (s !== end && ta.value.slice(s, end).includes('\n')) {
+        const selected = ta.value.slice(lineStart, end)
+        const lines = selected.split('\n')
+        const changed = lines.map((line) => (e.shiftKey ? line.replace(/^ {1,2}/, '') : `  ${line}`)).join('\n')
+        const delta = changed.length - selected.length
+        onChange(ta.value.slice(0, lineStart) + changed + ta.value.slice(end))
+        requestAnimationFrame(() => ta.setSelectionRange(lineStart, end + delta))
+        return
+      }
+      if (e.shiftKey) {
+        const before = ta.value.slice(lineStart, s)
+        const remove = before.match(/^ {1,2}/)?.[0].length ?? 0
+        if (!remove) return
+        onChange(ta.value.slice(0, lineStart) + ta.value.slice(lineStart + remove))
+        requestAnimationFrame(() => ta.setSelectionRange(Math.max(lineStart, s - remove), Math.max(lineStart, end - remove)))
+      } else {
+        onChange(ta.value.slice(0, s) + '  ' + ta.value.slice(end))
+        requestAnimationFrame(() => ta.setSelectionRange(s + 2, s + 2))
+      }
     }
   }
 
@@ -191,9 +219,9 @@ export const Editor = forwardRef<
       </pre>
       <div className="relative min-w-0 flex-1">
         <pre ref={mirrorRef} className="ed-layer ed-mirror text-ink" aria-hidden="true">
-          {lineDecorations?.map((item, i) => (
+          {lineDecorations?.map((item) => (
             <span
-              key={`${item.line}-${item.kind}-${i}`}
+              key={`${item.line}-${item.kind}`}
               className={`ed-diffline ed-diffline-${item.kind}`}
               style={{ top: `calc(16px + ${(item.line - 1) * LINE_HEIGHT_EM}em)` }}
             />
@@ -205,13 +233,15 @@ export const Editor = forwardRef<
           {'\n'}
         </pre>
         {value.length === 0 && emptyState && (
-          <div className="ed-empty" aria-hidden="true">
-            <div className="ed-empty-inner pop">
-              <p className="ed-quote">{emptyState.text}</p>
-              {emptyState.by && <p className="ed-quote-by">{emptyState.by}</p>}
-              <span className="ed-quote-rule" />
-              <p className="ed-quote-hint">Paste or start typing — SQL, JSON or JavaScript</p>
-            </div>
+          <div
+            className="ed-empty"
+            onMouseDown={(event) => {
+              if ((event.target as HTMLElement).closest('button, a, input')) return
+              event.preventDefault()
+              taRef.current?.focus()
+            }}
+          >
+            {emptyState}
           </div>
         )}
         <textarea
@@ -230,7 +260,11 @@ export const Editor = forwardRef<
           autoComplete="off"
           wrap="off"
           aria-label="Code editor"
+          aria-describedby="editor-keyboard-hint"
         />
+        <span id="editor-keyboard-hint" className="sr-only">
+          Press Control M to toggle whether Tab indents code or moves focus.
+        </span>
       </div>
     </div>
   )

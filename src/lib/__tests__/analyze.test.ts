@@ -90,12 +90,39 @@ describe('analyzeSql graph', () => {
 
   it('routes CTE-body reads into the CTE node and CTE reads into the consumer', () => {
     const r = analyzeSql(`WITH recent AS (SELECT * FROM orders) SELECT * FROM recent;`)
-    const cte = r.graph.nodes.find((n) => n.id === 'recent')
+    const cte = r.graph.nodes.find((n) => n.id === '#cte-1-recent')
     expect(cte?.kind).toBe('cte')
     expect(r.graph.edges).toEqual(
       expect.arrayContaining([
-        { from: 'orders', to: 'recent' },
-        { from: 'recent', to: '#select-1' },
+        { from: 'orders', to: '#cte-1-recent' },
+        { from: '#cte-1-recent', to: '#select-1' },
+      ]),
+    )
+  })
+
+  it('keeps CTEs distinct from same-named tables', () => {
+    const r = analyzeSql(`WITH items AS (SELECT * FROM source) INSERT INTO items SELECT * FROM items;`)
+    expect(r.graph.nodes.map((n) => [n.id, n.kind])).toEqual(
+      expect.arrayContaining([
+        ['items', 'table'],
+        ['#cte-1-items', 'cte'],
+      ]),
+    )
+    expect(r.graph.edges).toEqual(
+      expect.arrayContaining([
+        { from: 'source', to: '#cte-1-items' },
+        { from: '#cte-1-items', to: 'items' },
+      ]),
+    )
+  })
+
+  it('scopes repeated CTE names to their statements', () => {
+    const r = analyzeSql(`WITH x AS (SELECT * FROM a) SELECT * FROM x; WITH x AS (SELECT * FROM b) SELECT * FROM x;`)
+    expect(r.graph.nodes.filter((n) => n.kind === 'cte').map((n) => n.id)).toEqual(['#cte-1-x', '#cte-2-x'])
+    expect(r.graph.edges).toEqual(
+      expect.arrayContaining([
+        { from: 'a', to: '#cte-1-x' },
+        { from: 'b', to: '#cte-2-x' },
       ]),
     )
   })
@@ -112,6 +139,27 @@ describe('analyzeSql graph', () => {
     const ids = r.graph.nodes.map((n) => n.id)
     expect(ids).toContain('a')
     expect(ids).toContain('b')
+  })
+
+  it('recognizes contextual words as table names and write targets', () => {
+    const r = analyzeSql(
+      'SELECT * FROM type JOIN owner ON type.id = owner.id; INSERT INTO comment SELECT * FROM schema; UPDATE domain SET x = 1;'
+    )
+
+    expect(r.outline.map((node) => node.label)).toEqual([
+      'SELECT … FROM type',
+      'INSERT INTO comment',
+      'UPDATE domain',
+    ])
+    expect(r.graph.nodes.map((node) => node.id)).toEqual(
+      expect.arrayContaining(['type', 'owner', 'comment', 'schema', 'domain']),
+    )
+    expect(r.graph.edges).toEqual(
+      expect.arrayContaining([
+        { from: 'owner', to: '#select-1' },
+        { from: 'schema', to: 'comment' },
+      ]),
+    )
   })
 
   it('caps graph nodes and flags truncation', () => {

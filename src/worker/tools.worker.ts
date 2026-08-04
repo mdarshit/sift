@@ -9,6 +9,8 @@ import type { Issue, ToolRequest, ToolResponse, ValidateResult } from '../types'
 import { formatterLanguage } from '../lib/detect'
 import { minifySql, obfuscateSql } from '../lib/transform'
 import { analyzeSql } from '../lib/analyze'
+import { diffLines } from '../lib/diff'
+import { parseJsonTree } from '../lib/jsonTools'
 
 function post(msg: ToolResponse) {
   ;(self as unknown as { postMessage: (m: unknown) => void }).postMessage(msg)
@@ -294,18 +296,19 @@ self.onmessage = async (e: MessageEvent<ToolRequest>) => {
   try {
     switch (req.action) {
       case 'validate':
-        post({ id: req.id, ok: true, validate: await validate(req) })
+        post({ id: req.id, action: req.action, ok: true, validate: await validate(req) })
         break
       case 'format':
-        post({ id: req.id, ok: true, result: await format(req) })
+        post({ id: req.id, action: req.action, ok: true, result: await format(req) })
         break
       case 'minify':
-        post({ id: req.id, ok: true, result: minify(req) })
+        post({ id: req.id, action: req.action, ok: true, result: minify(req) })
         break
       case 'obfuscate': {
         const r = obfuscateSql(req.text)
         post({
           id: req.id,
+          action: req.action,
           ok: true,
           result: r.sql,
           counts: { identifiers: r.identifiers, strings: r.strings },
@@ -314,8 +317,16 @@ self.onmessage = async (e: MessageEvent<ToolRequest>) => {
         break
       }
       case 'analyze':
-        post({ id: req.id, ok: true, analyze: analyzeSql(req.text) })
+        post({ id: req.id, action: req.action, ok: true, analyze: analyzeSql(req.text) })
         break
+      case 'lineDiff':
+        post({ id: req.id, action: req.action, ok: true, diff: diffLines(req.left, req.right) })
+        break
+      case 'jsonTree':
+        post({ id: req.id, action: req.action, ok: true, json: parseJsonTree(req.text) })
+        break
+      default:
+        post({ id: (req as ToolRequest).id, ok: false, error: 'Unsupported tools worker action' })
     }
   } catch (err) {
     post({ id: req.id, ok: false, error: err instanceof Error ? err.message : String(err) })

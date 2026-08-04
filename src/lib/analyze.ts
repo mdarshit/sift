@@ -61,7 +61,6 @@ function unquote(t: PTok): string {
 function dottedName(toks: PTok[], i: number): { name: string; next: number } | null {
   const t = toks[i]
   if (!t || (t.type !== 'word' && t.type !== 'qident')) return null
-  if (t.type === 'word' && KEYWORDS.has(t.text.toLowerCase())) return null
   let name = unquote(t)
   let j = i + 1
   while (
@@ -370,11 +369,13 @@ export function analyzeSql(sql: string): AnalyzeResult {
     if (from !== to && nodes.has(from) && nodes.has(to)) edges.add(`${from} ${to}`)
   }
 
-  for (const s of stmts) {
-    const cteNames = new Set(s.ctes.map((c) => c.name.toLowerCase()))
+  for (let stmtIndex = 0; stmtIndex < stmts.length; stmtIndex++) {
+    const s = stmts[stmtIndex]
+    const cteIds = new Map(s.ctes.map((c) => [c.name.toLowerCase(), `#cte-${stmtIndex + 1}-${c.name.toLowerCase()}`]))
     for (const c of s.ctes) {
-      addNode(c.name.toLowerCase(), () => ({
-        id: c.name.toLowerCase(),
+      const id = cteIds.get(c.name.toLowerCase()) as string
+      addNode(id, () => ({
+        id,
         kind: 'cte',
         label: c.name,
         line: c.line,
@@ -397,15 +398,16 @@ export function analyzeSql(sql: string): AnalyzeResult {
       }))
     }
     for (const r of s.reads) {
-      const id = r.name.toLowerCase()
+      const nameKey = r.name.toLowerCase()
+      const id = cteIds.get(nameKey) ?? nameKey
       addNode(id, () => ({
         id,
-        kind: cteNames.has(id) ? 'cte' : 'table',
+        kind: cteIds.has(nameKey) ? 'cte' : 'table',
         label: r.name,
         line: r.line,
         offset: r.offset,
       }))
-      const to = r.inCte !== null ? r.inCte.toLowerCase() : targetId
+      const to = r.inCte !== null ? (cteIds.get(r.inCte.toLowerCase()) ?? null) : targetId
       if (to) addEdge(id, to)
     }
   }

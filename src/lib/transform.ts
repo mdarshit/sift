@@ -2,7 +2,7 @@
  * SQL text transforms: minify (optionally to a single line) and obfuscate.
  * Token-based, so string literals and quoted identifiers are never corrupted.
  */
-import { FUNCTIONS, KEYWORDS } from './sqlTokens'
+import { CONTEXTUAL_KEYWORDS, FUNCTIONS, KEYWORDS } from './sqlTokens'
 import type { ObfuscationMapping } from '../types'
 
 export type TokenType = 'comment' | 'string' | 'qident' | 'param' | 'word' | 'number' | 'ws' | 'punct'
@@ -52,11 +52,15 @@ const NO_SPACE_AFTER = new Set(['(', ','])
  * a single line; otherwise each statement gets its own line.
  */
 export function minifySql(sql: string, oneLine = false): string {
-  const tokens = tokenize(sql).filter((t) => t.type !== 'comment')
+  const tokens = tokenize(sql)
   const out: string[] = []
   let pendingSpace = false
 
   for (const t of tokens) {
+    if (t.type === 'comment') {
+      if (out.length > 0) pendingSpace = true
+      continue
+    }
     if (t.type === 'ws') {
       if (out.length > 0) pendingSpace = true
       continue
@@ -105,9 +109,43 @@ export function obfuscateSql(sql: string): ObfuscateResult {
     return mapped
   }
 
-  const out = tokenize(sql).map((t) => {
-    if (t.type === 'word' && !KEYWORDS.has(t.text.toLowerCase()) && !FUNCTIONS.has(t.text.toLowerCase())) {
-      return mapIdent(t.text)
+  const tokens = tokenize(sql)
+  const significant = tokens
+    .map((token, index) => ({ token, index }))
+    .filter(({ token }) => token.type !== 'ws' && token.type !== 'comment')
+  const significantIndex = new Map(significant.map(({ index }, position) => [index, position]))
+
+  const isContextualSyntax = (position: number, word: string): boolean => {
+    const previous = significant[position - 1]?.token
+    const previousWord = previous?.type === 'word' ? previous.text.toLowerCase() : ''
+    const next = significant[position + 1]?.token
+    const nextWord = next?.type === 'word' ? next.text.toLowerCase() : ''
+    let statementStart = position
+    while (statementStart > 0 && significant[statementStart - 1].token.text !== ';') statementStart--
+    const statementWords = significant
+      .slice(statementStart, position)
+      .filter(({ token }) => token.type === 'word')
+      .map(({ token }) => token.text.toLowerCase())
+    const inCreateFunction = statementWords[0] === 'create' && statementWords.includes('function')
+
+    if (['type', 'schema', 'domain'].includes(word)) {
+      return ['create', 'alter', 'drop'].includes(previousWord) || (statementWords[0] === 'comment' && previousWord === 'on')
+    }
+    if (word === 'comment') return nextWord === 'on'
+    if (word === 'owner') return nextWord === 'to'
+    if (word === 'rows') {
+      return (inCreateFunction && next?.type === 'number') || ['between', 'current', 'unbounded'].includes(nextWord)
+    }
+    if (word === 'support') return inCreateFunction && (next?.type === 'word' || next?.type === 'qident')
+    return false
+  }
+
+  const out = tokens.map((t, index) => {
+    if (t.type === 'word') {
+      const word = t.text.toLowerCase()
+      const position = significantIndex.get(index) as number
+      const syntax = KEYWORDS.has(word) && (!CONTEXTUAL_KEYWORDS.has(word) || isContextualSyntax(position, word))
+      if (!syntax && !FUNCTIONS.has(word)) return mapIdent(t.text)
     }
     if (t.type === 'qident' && t.text.length > 1) {
       // Strip the quoting; generated names never need it.

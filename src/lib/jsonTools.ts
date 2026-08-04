@@ -1,136 +1,77 @@
-export type JsonKind = 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null'
+import type { JsonKind, JsonTreeNode, JsonTreeResult } from '../types'
 
-export interface JsonTreeNode {
-  key: string
-  path: string
-  kind: JsonKind
-  preview: string
-  children?: JsonTreeNode[]
-}
-
-export type JsonParseResult = { ok: true; value: unknown; tree: JsonTreeNode } | { ok: false; message: string }
-
-export type JsonDiffKind = 'added' | 'removed' | 'changed' | 'type'
-
-export interface JsonDiffItem {
-  kind: JsonDiffKind
-  path: string
-  left: string
-  right: string
-}
-
-export interface JsonDiffResult {
-  ok: true
-  items: JsonDiffItem[]
-  truncated: boolean
-}
-
-export type JsonDiffParseResult = JsonDiffResult | { ok: false; side: 'left' | 'right'; message: string }
-
-const DIFF_LIMIT = 600
-const CHILD_LIMIT = 500
+const MAX_DEPTH = 40
+const MAX_NODES = 5_000
+const MAX_CHILDREN = 500
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/
 
 function kindOf(value: unknown): JsonKind {
   if (value === null) return 'null'
   if (Array.isArray(value)) return 'array'
-  const t = typeof value
-  if (t === 'string' || t === 'number' || t === 'boolean') return t
-  return 'object'
+  const kind = typeof value
+  return kind === 'string' || kind === 'number' || kind === 'boolean' ? kind : 'object'
 }
 
 function preview(value: unknown): string {
-  const kind = kindOf(value)
-  if (kind === 'object') return `{${Object.keys(value as Record<string, unknown>).length}}`
-  if (kind === 'array') return `[${(value as unknown[]).length}]`
+  if (Array.isArray(value)) return `[${value.length}]`
+  if (value !== null && typeof value === 'object') return `{${Object.keys(value).length}}`
   const text = JSON.stringify(value)
-  return text.length > 80 ? text.slice(0, 77) + '...' : text
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text
 }
 
-function childPath(parent: string, key: string | number): string {
-  return typeof key === 'number' ? `${parent}[${key}]` : `${parent}.${key}`
+function pathFor(parent: string, key: string, arrayIndex: boolean): string {
+  if (arrayIndex) return `${parent}[${key}]`
+  return IDENTIFIER.test(key) ? `${parent}.${key}` : `${parent}[${JSON.stringify(key)}]`
 }
 
-function buildTree(value: unknown, key = '$', path = '$'): JsonTreeNode {
-  const kind = kindOf(value)
-  if (kind === 'array') {
-    const arr = value as unknown[]
-    return {
-      key,
-      path,
-      kind,
-      preview: preview(value),
-      children: arr.slice(0, CHILD_LIMIT).map((item, i) => buildTree(item, String(i), childPath(path, i))),
-    }
-  }
-  if (kind === 'object') {
-    const obj = value as Record<string, unknown>
-    return {
-      key,
-      path,
-      kind,
-      preview: preview(value),
-      children: Object.keys(obj)
-        .slice(0, CHILD_LIMIT)
-        .map((name) => buildTree(obj[name], name, childPath(path, name))),
-    }
-  }
-  return { key, path, kind, preview: preview(value) }
+function makeNode(value: unknown, key: string, path: string): JsonTreeNode {
+  return { key, path, kind: kindOf(value), preview: preview(value) }
 }
 
-export function parseJsonTree(text: string): JsonParseResult {
+export function parseJsonTree(text: string): JsonTreeResult {
+  let value: unknown
   try {
-    const value = JSON.parse(text)
-    return { ok: true, value, tree: buildTree(value) }
+    value = JSON.parse(text)
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: 'parse', message: err instanceof Error ? err.message : String(err) }
   }
-}
-
-function pushDiff(items: JsonDiffItem[], item: JsonDiffItem): boolean {
-  if (items.length >= DIFF_LIMIT) return false
-  items.push(item)
-  return true
-}
-
-function diffValue(left: unknown, right: unknown, path: string, items: JsonDiffItem[]): boolean {
-  if (Object.is(left, right)) return true
-  const lk = kindOf(left)
-  const rk = kindOf(right)
-  if (lk !== rk) return pushDiff(items, { kind: 'type', path, left: lk, right: rk })
-
-  if (lk === 'array') {
-    const l = left as unknown[]
-    const r = right as unknown[]
-    const n = Math.max(l.length, r.length)
-    for (let i = 0; i < n; i++) {
-      if (i >= l.length && !pushDiff(items, { kind: 'added', path: childPath(path, i), left: '', right: preview(r[i]) })) return false
-      else if (i >= r.length && !pushDiff(items, { kind: 'removed', path: childPath(path, i), left: preview(l[i]), right: '' })) return false
-      else if (!diffValue(l[i], r[i], childPath(path, i), items)) return false
+  const tree = makeNode(value, '$', '$')
+  const limits = { depth: false, nodes: false, children: false }
+  let nodes = 1
+  let omittedNodes = 0
+  const stack: { value: unknown; node: JsonTreeNode; depth: number }[] = [{ value, node: tree, depth: 0 }]
+  while (stack.length) {
+    const current = stack.pop()!
+    if (current.node.kind !== 'array' && current.node.kind !== 'object') continue
+    const keys = Array.isArray(current.value) ? current.value.map((_, i) => String(i)) : Object.keys(current.value as object)
+    if (current.depth >= MAX_DEPTH) {
+      current.node.depthTruncated = keys.length > 0
+      if (keys.length) {
+        limits.depth = true
+        omittedNodes += keys.length
+      }
+      continue
     }
-    return true
-  }
-
-  if (lk === 'object') {
-    const l = left as Record<string, unknown>
-    const r = right as Record<string, unknown>
-    const keys = [...new Set([...Object.keys(l), ...Object.keys(r)])].sort()
-    for (const key of keys) {
-      if (!(key in l) && !pushDiff(items, { kind: 'added', path: childPath(path, key), left: '', right: preview(r[key]) })) return false
-      else if (!(key in r) && !pushDiff(items, { kind: 'removed', path: childPath(path, key), left: preview(l[key]), right: '' })) return false
-      else if (!diffValue(l[key], r[key], childPath(path, key), items)) return false
+    const allowed = Math.min(keys.length, MAX_CHILDREN, MAX_NODES - nodes)
+    if (allowed < keys.length) {
+      current.node.omittedChildren = keys.length - allowed
+      omittedNodes += keys.length - allowed
+      if (keys.length > MAX_CHILDREN) limits.children = true
+      if (nodes >= MAX_NODES || allowed < Math.min(keys.length, MAX_CHILDREN)) limits.nodes = true
     }
-    return true
+    const children: JsonTreeNode[] = []
+    for (let i = 0; i < allowed; i++) {
+      const key = keys[i]
+      const container = current.value as Record<string, unknown>
+      if (!Object.prototype.hasOwnProperty.call(container, key)) continue
+      const childValue = container[key]
+      const child = makeNode(childValue, key, pathFor(current.node.path, key, Array.isArray(current.value)))
+      children.push(child)
+      nodes++
+      stack.push({ value: childValue, node: child, depth: current.depth + 1 })
+    }
+    current.node.children = children
   }
-
-  return pushDiff(items, { kind: 'changed', path, left: preview(left), right: preview(right) })
-}
-
-export function diffJson(leftText: string, rightText: string): JsonDiffParseResult {
-  const left = parseJsonTree(leftText)
-  if (!left.ok) return { ok: false, side: 'left', message: left.message }
-  const right = parseJsonTree(rightText)
-  if (!right.ok) return { ok: false, side: 'right', message: right.message }
-  const items: JsonDiffItem[] = []
-  const complete = diffValue(left.value, right.value, '$', items)
-  return { ok: true, items, truncated: !complete }
+  const truncated = limits.depth || limits.nodes || limits.children
+  return { ok: true, tree, truncated, omittedNodes, limits }
 }

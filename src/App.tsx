@@ -473,7 +473,7 @@ export default function App() {
       } else if (k === 'l') {
         e.preventDefault()
         setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
-      } else if (k === 'g') {
+      } else if (k === 'g' && lang !== 'js') {
         e.preventDefault()
         if (lang === 'json') setShowJsonTree((v) => !v)
         else if (lang === 'sql') setShowGraph((v) => !v)
@@ -916,7 +916,7 @@ export default function App() {
       )}
       {menu.element}
       {showHelp && <ShortcutsDialog shortcuts={shortcuts} onClose={() => setShowHelp(false)} />}
-      {showGraph && (
+      {showGraph && lang === 'sql' && (
         <GraphDialog
           result={currentStructure}
           loading={analyzing}

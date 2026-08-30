@@ -104,3 +104,7 @@ src/lib/analyze.ts              statement/CTE/table extraction for the outline +
 - JavaScript formatting is supported; minification and obfuscation remain SQL-only.
 - Compound statements with `;` inside bodies (triggers) are handled by bounded
   re-parsing; pathological cases may mis-anchor an error by a statement.
+
+## License
+
+MIT
